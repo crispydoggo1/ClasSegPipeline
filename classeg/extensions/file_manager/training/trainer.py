@@ -8,6 +8,7 @@ from classeg.training.trainer import Trainer, log
 import albumentations as A
 from monai.losses import DiceCELoss
 
+import matplotlib.pyplot as plt
 
 class SegmentationTrainer(Trainer):
     """
@@ -33,6 +34,8 @@ class SegmentationTrainer(Trainer):
                          world_size)
         self._last_val_accuracy = 0.
         self._val_accuracy = 0.
+        self._last_dice_score = 0.
+        self._dice_score = 0.
         self.softmax = nn.Softmax(dim=1)
 
     def get_augmentations(self) -> Tuple[Any, Any]:
@@ -67,6 +70,7 @@ class SegmentationTrainer(Trainer):
             self.optim.zero_grad()
             if log_image:
                 self.log_helper.log_augmented_image(data[0])
+                torch.save(data[0].cpu(), f"/home/elijah.mickelson/temp/{str(epoch)}.npy") # Debugging
             labels = labels.to(self.device, non_blocking=True)
             data = data.to(self.device)
             batch_size = data.shape[0]
@@ -90,9 +94,12 @@ class SegmentationTrainer(Trainer):
         :param epoch: The current epoch number.
         :return: Tuple containing the log message.
         """
-        message = f"Val accuracy: {self._val_accuracy} --change-- {self._val_accuracy - self._last_val_accuracy}"
+        val_message = f"Val accuracy: {self._val_accuracy} --change-- {self._val_accuracy - self._last_val_accuracy}"
         self._last_val_accuracy = self._val_accuracy
-        return message,
+        dice_message = f"Dice score: {self._dice_score} --change-- {self._dice_score - self._last_dice_score}"
+        self._last_dice_score = self._dice_score
+        # return val_message, dice_message,
+        return dice_message,
 
     # noinspection PyTypeChecker
     def eval_single_epoch(self, epoch) -> float:
@@ -106,6 +113,9 @@ class SegmentationTrainer(Trainer):
         running_loss = 0.
         correct_count = 0.
         total_items = 0
+        total_pixels = 0
+        either_true_count = 0
+        both_true_count = 0
         all_predictions, all_labels = [], []
         i = 0
         for data, labels, _ in self.val_dataloader:
@@ -115,19 +125,30 @@ class SegmentationTrainer(Trainer):
             if i == 1 and epoch % 10 == 0:
                 self.log_helper.log_net_structure(self.model, data)
             batch_size = data.shape[0]
+
             # do prediction and calculate loss
             predictions = self.model(data)
             loss = self.loss(predictions, labels)
             running_loss += loss.item() * batch_size
+
             # analyze
             predictions = torch.argmax(self.softmax(predictions), dim=1)
-            labels = torch.argmax(labels, dim=1)
+            labels = labels.squeeze()
+
             all_predictions.extend(predictions.tolist())
             all_labels.extend(labels.tolist())
+
+            # dice score
+            either_true_count += torch.sum(predictions == 1)
+            either_true_count += torch.sum(labels == 1)
+            both_true_count += torch.sum((predictions == 1) & (labels == 1))
+
             correct_count += torch.sum(predictions == labels)
+            total_pixels += torch.prod(torch.tensor(labels.shape))
             total_items += batch_size
-        self.log_helper.eval_epoch_complete(all_predictions, all_labels)
-        self._val_accuracy = correct_count / total_items
+        # self.log_helper.eval_epoch_complete(all_predictions, all_labels)
+        self._val_accuracy = correct_count / total_pixels
+        self._dice_score = 2.0 * both_true_count / either_true_count
         return running_loss / total_items
 
     def get_loss(self) -> nn.Module:

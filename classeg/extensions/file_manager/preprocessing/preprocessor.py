@@ -4,6 +4,7 @@ from typing import Dict
 
 import numpy as np
 from PIL import ImageFile
+import cv2
 from overrides import override
 from tqdm import tqdm
 
@@ -118,17 +119,39 @@ class ExtensionPreprocessor(Preprocessor):
         """
         Called before standard preprocessing flow
         """
-        originalPath = "C:/Users/xSkul/OneDrive/Documents/Projects/Wheat/wheat/Wheat Simulation/Assets/Screenshots/512x512"
+        originalPaths = [
+            "/home/elijah.mickelson/documents/datasets/wheat512x512/512x512-2", 
+            "/home/elijah.mickelson/documents/datasets/wheat512x512/512x512-3"]
         datasetPath = f"{RAW_ROOT}/{self.dataset_name}"
         labelsPath = f"{datasetPath}/labelsTr"
         imagesPath = f"{datasetPath}/imagesTr"
-        allImages = sorted([x for x in glob.glob(f"{originalPath}/*.png") if "image" in x])
-        allLabels = sorted([x for x in glob.glob(f"{originalPath}/*.png") if "annotation" in x])
+        try:
+            os.mkdir(labelsPath)
+            os.mkdir(imagesPath)
+        except:
+            pass
+
+        
+        # Flatten a 2D list into a 1D list
+        def flatten(xss):
+            return [x for xs in xss for x in xs]
+        # Get all images and labels from all datasets in the originalPaths list
+        allImages = sorted([x for x in flatten([glob.glob(f"{originalPath}/*.png") for originalPath in originalPaths]) if "image" in x])
+        allLabels = sorted([x for x in flatten([glob.glob(f"{originalPath}/*.png") for originalPath in originalPaths]) if "annotation" in x])
+
         case_num = 0
-        for image, label in tqdm(zip(allImages, allLabels)):
+        for image, label in tqdm(zip(allImages, allLabels), total=len(allLabels)):
             case_number = get_case_name_from_number(case_num)
-            shutil.copy(image, f"{imagesPath}/{case_number}.png")
-            shutil.copy(label, f"{labelsPath}/{case_number}.png")
+
+            # Change the color range of the image from (0,255) to (0,1) then save it in the images path
+            image_rgb = cv2.imread(image, cv2.IMREAD_COLOR)
+            image_rgb = (image_rgb - np.min(image_rgb)) / (np.max(image_rgb) - np.min(image_rgb))
+            cv2.imwrite(f"{imagesPath}/{case_number}.png", image_rgb)
+            
+            # Change the label to one color channel then save it in the labels path
+            label_grayscale = cv2.imread(label, cv2.IMREAD_GRAYSCALE)
+            cv2.imwrite(f"{labelsPath}/{case_number}.png", label_grayscale)
+
             case_num += 1
 
 
